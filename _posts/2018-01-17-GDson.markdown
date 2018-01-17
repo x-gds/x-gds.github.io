@@ -1,0 +1,261 @@
+---
+layout: post
+title:  "GDson"
+date:   2018-01-17 15:48:00 +0800
+categories: Android
+---
+
+这次撸一个编译期自动生成`TypeAdatper`的小工具，起个名就叫`GDson`。
+
+## Java注解（Annotation）
+
+注解是用来描述Java代码的，除此之外它还提供了一些功能，可以在编译期或者运行时根据注解做一些事情。先看一个最常见的注解：
+
+```java
+@Target({ElementType.METHOD})
+@Retention(RetentionPolicy.SOURCE)
+public @interface Override {
+}
+```
+
+`Target`指明当前注解作用于哪一个元素类型，后面跟一个数组，上面代码中`Override`注解只作用于方法。所有的页面类型如下：
+
+```java
+package java.lang.annotation;
+
+public enum ElementType {
+    TYPE,
+    FIELD,
+    METHOD,
+    PARAMETER,
+    CONSTRUCTOR,
+    LOCAL_VARIABLE,
+    ANNOTATION_TYPE,
+    PACKAGE,
+    TYPE_PARAMETER,
+    TYPE_USE;
+
+    private ElementType() {
+    }
+}
+```
+
+`Retention`表示当前注解的有效期，`RetentionPolicy`中共有3个元素：`SOURCE`表示该注解只保留在源文件中，编译期可能会被丢弃；`CLASS`表示该注解会被保留在`.class`文件中；`RUNTIME`表示该注解会在运行时用到。
+
+## Gson
+
+在开始撸代码之前，需要注意几个点：
+
+1. `TypeAdapterFactory`：Gson中可以通过`GsonBuilder`注册一些`TypeAdapterFactory`，顾名思义，它是一个制造`TypeAdapter`的工厂。另外，我们发现`Gson`有个名为`typeTokenCache`的成员变量，它缓存了一些已知的`TypeAdapter`，所以在`TypeAdapterFactory`中我们不必使用缓存。
+2. `FieldNamingPolicy`：这是Gson的一个特性，可以指定在序列化/反序列化时的字段名策略。`IDENTITY`表示字段名和Json中完全一样；`UPPER_CAMEL_CASE`表示首字母大写的驼峰式，比如`someFieldName --> SomeFieldName`、`_someFieldName --> _SomeFieldName`；`UPPER_CAMEL_CASE_WITH_SPACES`和`UPPER_CAMEL_CASE`的区别是每个单词之间用空格分隔，比如`someFieldName --> Some Field Name`、`_someFieldName --> _Some Field Name`；`LOWER_CASE_WITH_UNDERSCORES`表示所有字母小写并用下短杠分隔；`LOWER_CASE_WITH_DASHES`表示所有字母小写，并用短杠分隔。
+3. `GsonBuilder#serializeNulls()`：序列化时要不要写入`null`值。
+4. 生成`.java`文件时，对基本数据类型和复合类型肯定要分别对待，后者的序列化和反序列化都要借助`TypeAdapter`来完成，而基本数据类型可以直接读写。需要注意的是，`String`的处理和基本数据类型一样，而`long`由于有`LongSerializationPolicy`这货的存在，我们也要借助`TypeAdapter`来解析`long`。
+
+## 开撸
+
+首先，新建一个名为`GDson`的Android项目，这是个测试项目。新建一个名为`library`的Java Library Module，在其`build.gradle`文件中加入Gson的依赖：
+
+```java
+compile 'com.google.code.gson:gson:2.8.2'
+```
+
+再建一个名为`processor`的Java library Module，令其依赖`library`、`javapoet`和`auto-service`：
+
+```java
+compile project(':library')
+compile 'com.squareup:javapoet:1.8.0'
+compile 'com.google.auto.service:auto-service:1.0-rc2'
+```
+
+接下来我们先定义我们的注解，起名随意一点，就叫`GDson`吧：
+
+```java
+package com.gdson;
+
+import com.google.gson.FieldNamingPolicy;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target({ElementType.TYPE})
+@Retention(RetentionPolicy.CLASS)
+public @interface GDson {
+    FieldNamingPolicy fieldNamingPolicy() default FieldNamingPolicy.IDENTITY;
+
+    boolean serializeNulls() default false;
+}
+```
+
+暂时`library`中就这么一个文件，以后有需要再说。
+
+`processor`中，我们依赖了`javapoet`和`auto-service`，前者是square开源的一个生成`.java`文件的项目，后者是Google开源的一个注解处理器的辅助工具，官方说明为A configuration/metadata generator for java.util.ServiceLoader-style service providers。
+
+首先定义我们的注解处理器类，给这类加上`@AutoService(Processor.class)`的注解，编译时注解处理服务就能找到这个注解处理器了。然后再实现几个方法：
+
+```java
+package com.gdson.processor;
+
+import com.gdson.GDson;
+import com.google.auto.service.AutoService;
+
+import java.util.HashSet;
+import java.util.Set;
+
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.Processor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.TypeElement;
+
+@AutoService(Processor.class)
+public class GDsonProcessor extends AbstractProcessor {
+    @Override
+    public Set<String> getSupportedAnnotationTypes() {
+        HashSet<String> set = new HashSet<>(1);
+        set.add(GDson.class.getCanonicalName());
+        return set;
+    }
+
+    @Override
+    public SourceVersion getSupportedSourceVersion() {
+        return SourceVersion.latestSupported();
+    }
+
+    @Override
+    public boolean process(Set<? extends TypeElement> set, RoundEnvironment roundEnvironment) {
+        if (set.isEmpty()) {
+            return true;
+        }
+
+        Set<? extends Element> elements = roundEnvironment.getElementsAnnotatedWith(GDson.class);
+        for (Object element : elements) {
+            TypeAdapterWriter typeAdapterWriter = new TypeAdapterWriter(processingEnv, (TypeElement) element);
+            typeAdapterWriter.write(new SynchronizedFiler(processingEnv.getFiler()));
+        }
+
+        TypeAdapterFactoryWriter typeAdapterFactoryWriter = new TypeAdapterFactoryWriter(processingEnv, elements);
+        typeAdapterFactoryWriter.write(new SynchronizedFiler(processingEnv.getFiler()));
+        return true;
+    }
+}
+
+```
+
+`getSupportedAnnotationTypes()`方法返回的是该注解处理器支持的注解类型，咱们只需要处理`GDson`一个类型。`getSupportedSourceVersion()`返回的是支持的源码版本，默认是Java6，有点老了，咱们这里直接写`SourceVersion.latestSupported()`就行了。`process()`中实现注解处理的过程，`TypeAdapterWriter`和`TypeAdapterFactoryWriter`是我们自定义的生成`TypeAdapter`和`TypeAdapterFactory`的`.java`文件的类，`Filer`顾名思义就是装订员，将Java代码写入到`.java`文件中，`SynchronizedFiler`是线程安全的`Filer`。
+
+```java
+package com.gdson.processor;
+
+import java.io.IOException;
+
+import javax.annotation.processing.Filer;
+import javax.lang.model.element.Element;
+import javax.tools.FileObject;
+import javax.tools.JavaFileManager;
+import javax.tools.JavaFileObject;
+
+public class SynchronizedFiler implements Filer {
+
+    private final Filer parent;
+
+    public SynchronizedFiler(Filer parent) {
+        this.parent = parent;
+    }
+
+    @Override
+    public JavaFileObject createSourceFile(CharSequence name,
+                                           Element... originatingElements)
+            throws IOException {
+        synchronized (parent) {
+            return parent.createSourceFile(name, originatingElements);
+        }
+    }
+
+    @Override
+    public JavaFileObject createClassFile(CharSequence name,
+                                          Element... originatingElements)
+            throws IOException {
+        synchronized (parent) {
+            return parent.createClassFile(name, originatingElements);
+        }
+    }
+
+    @Override
+    public FileObject createResource(JavaFileManager.Location location,
+                                     CharSequence pkg,
+                                     CharSequence relativeName,
+                                     Element... originatingElements)
+            throws IOException {
+        synchronized (parent) {
+            return parent.createResource(location, pkg, relativeName, originatingElements);
+        }
+    }
+
+    @Override
+    public FileObject getResource(JavaFileManager.Location location,
+                                  CharSequence pkg,
+                                  CharSequence relativeName) throws IOException {
+        synchronized (parent) {
+            return parent.getResource(location, pkg, relativeName);
+        }
+    }
+}
+```
+
+剩下的事就是怎么生成代码，这部分说起来比较无聊，还是先说说`javapoet`，剩下的直接上代码。
+
+## javapoet
+
+poet，意思为诗人，或者空想家，Javapoet，即用Java作诗的人，这个名字还是挺有意思的。
+
+javapoet总共只有17个类，粗略介绍一下：
+
+1. `TypeSpec`：类（`class`）、接口（`interface`）或者枚举（`enum`）的声明。
+2. `MethodSpec`：方法（`method`）或者构造方法（`constructor`）的声明。
+3. `ParameterSpec`：参数（`parameter`）的声明。
+4. `FieldSpec`：字段（`field`）的声明。
+5. `AnnotationSpec`：某个声明上的注解（`annotation`），构建以上4种类型的声明时，都可以用`addAnnotation(AnnotationSpec)`这个方法加一个注解。
+6. `CodeBlock`：代码块，实际上包含了声明（`declarations`）、语句（`statements`）和文档（`documentation`）。`CodeBlock`支持类似于`java.text.Format`占位符的方式，不过和`String#format`使用百分号来引用目标值不同，`CodeBlock`中用的是`$`，以下是一些支持的占位符：
+    * `$L`：表示一个字面量，可以是字符串、基本数据类型、`TypeSpec`、`AnnotationSpec`和其他`CodeBlock`。
+    * `$N`：表示一个名称，可以是字符串（实际上可以是任意`CharSequence`）、`ParameterSpec`、`FieldSpec`、`MethodSpec`和`TypeSpec`。
+    * `$S`：表示一个字符串
+    * `$T`：表示一个类型，类型会被自动导入。可以是`Class`、`javax.lang.model.type.TypeMirror`和`javax.lang.model.element.Element`
+    * `$W`：表示一个空格或者新起一行，取决于它在一行的位置。
+    * 剩下的`$$`、`$>`、`$<`、`$[`和`$]`和你想的一样。
+7. `TypeName`、`ClassName`、`ArrayTypeName`、`ParameterizedTypeName`、`TypeVariableName`、`WildcardTypeName`：这几个类是处理类型名用的，具体不说了。
+8. `LineWrapper`、`Util`：两个工具类
+9. `NameAllocator`：名称分配器，也是个有意思的工具类
+10. `CodeWriter`和`JavaFile`：`JavaFile`表示的是我们要生成的`.java`文件，`CodeWriter`可以将一个`JavaFile`转为字符串。
+
+来个HelloWorld：
+
+```java
+private static void generateHelloWorld() throws IOException {
+	MethodSpec main = MethodSpec.methodBuilder("main").addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+			.addParameter(String[].class, "args").addStatement("$T.out.println($S)", System.class, "Hello World")
+			.build();
+	TypeSpec typeSpec = TypeSpec.classBuilder("HelloWorld").addModifiers(Modifier.FINAL, Modifier.PUBLIC)
+			.addMethod(main).build();
+	JavaFile javaFile = JavaFile.builder("com.example.helloworld", typeSpec).build();
+	javaFile.writeTo(System.out);
+}
+```
+
+输出结果：
+
+```java
+package com.example.helloworld;
+
+import java.lang.String;
+import java.lang.System;
+
+public final class HelloWorld {
+  public static void main(String[] args) {
+    System.out.println("Hello World");
+  }
+}
+```
+
