@@ -13,11 +13,11 @@ Dex：Dalvik Executable format，即Dalvik可执行文件格式。实际上在5.
 
 在动手之前，有两个非常重要的概念需要了解一下：
 
-###字节序
+### 字节序
 
 即字节顺序，分为大端序、小端序和混合序。详细可以参考[维基百科](https://zh.wikipedia.org/wiki/%E5%AD%97%E8%8A%82%E5%BA%8F)，这里以Dex文件结构简单说一下，从freeline的产出文件中拿到一个classes.dex文件，查看大小为`12296`字节，十六进制是`0x3008`，如果以大端序存储，应该为`00 00 30 08`，小端序应该为`08 30 00 00`（数据以8bit为单位存储）。
 
-###Leb128
+### Leb128
 
 Little-Endian Base 128，详细信息在[DWARF3](http://dwarfstd.org/Dwarf3Std.php)。简单点说就是数据可变长度的编码方式，在dex文件中，使用0－5位字节来编码32位整数。数据存储方式也是小端序，如果第一个字节的最高位是1，则继续读下一个字节，依次读取，最多只能读5个字节，如果第5个字节还是1则dex无效。
 
@@ -31,7 +31,7 @@ Leb128有3种类型：`sleb128`（signed LEB128，编码序列的最后1位表�
 
 `AOSP`中提供了解码`leb128`的`c`和`java`代码。
 
-##Dex文件结构
+## Dex文件结构
 
 从[官方文档](https://source.android.com/devices/tech/dalvik/dex-format.html#file-layout)中可以看到，一个`.dex`文件主要分为3层：头信息、索引表、数据区。其中索引表中又分为了`string_ids`、`type_ids`、`proto_ids`、`field_ids`、`method_ids`、`class_defs`。
 
@@ -39,7 +39,7 @@ Leb128有3种类型：`sleb128`（signed LEB128，编码序列的最后1位表�
 
 根据头信息中的数据可以找到各种索引区的位置，然后在索引区的数据中可以找到当前类型数据在文件中的存储位置。比如下面`Hello.dex`中，从头信息中可以知道有14个`string`以及`string_ids`的位置，解析`string_id`可以得到字符串的位置。
 
-###实战
+### 实战
 
 掌握上面的知识后，我们就可以结合[官方文档](https://source.android.com/devices/tech/dalvik/dex-format.html#file-layout)和AOSP源码来解析一个`.dex`文件了。AOSP中用到的文件有：
 
@@ -50,7 +50,7 @@ dalvik/libdex/DexClass.h
 libcore/dex/src/main/java/com/android/dex/Leb128.java
 ```
 
-###Hello World
+### Hello World
 
 我们来生成一个最简单的`.dex`文件。
 
@@ -74,7 +74,7 @@ public class HelloWorld {
 
 最后产出`Hello.dex`文件。
 
-###Header Section
+### Header Section
 
 |name|format|description|
 |---|---|---|
@@ -192,7 +192,7 @@ private static void verifySignature(File DEX, DexFile dexFile) throws IOExceptio
 
 结果都为`true`。
 
-###String
+### String
 
 从Header中可以知道`string_ids`区的位置，这个区中存储的是`string_id_item`的列表，`string_id_item`中存储的是一个名为`string_data_off`的`uint`类型值，这个值表示对应的`string_data_item`在文件中的位置，详情如下：
 
@@ -261,7 +261,7 @@ public static ArrayList<StringDataItem> parse(File DEX, List<DexStringId> dexStr
 |12|544|3|out|
 |13|549|7|println|
 
-###Type、Proto、Field、Method
+### Type、Proto、Field、Method
 
 这几种都不细说了，和字符串一样，结果整理如下：
 
@@ -300,7 +300,7 @@ public static ArrayList<StringDataItem> parse(File DEX, List<DexStringId> dexStr
 |2|println|Ljava/io/PrintStream;|VL|V|1|Ljava/lang/String;|
 |3|\<init\>|Ljava/lang/Object;|V|V|0|-|
 
-###ClassDef
+### ClassDef
 
 类的定义，解析过程和上面一样，看文档及源码就行了：
 
