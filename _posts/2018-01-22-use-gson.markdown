@@ -1,0 +1,326 @@
+---
+layout: post
+title:  "Gson使用指南"
+date:   2018-01-22 20:12:08 +0800
+categories: Android
+---
+
+Gson是Google开源的一个用于Json字符串和Java对象互相转换的Java库。
+
+## 项目中引入Gson
+
+Gradle：
+
+```groovy
+dependencies {
+    compile 'com.google.code.gson:gson:2.8.2'
+}
+```
+
+Maven：
+
+```xml
+<dependencies>
+    <!--  Gson: Java to Json conversion -->
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <version>2.8.2</version>
+      <scope>compile</scope>
+    </dependency>
+</dependencies>
+```
+
+## 使用：
+
+创建`Gson`实例有两种方式：`new Gson()`和`new GsonBuilder().create()`，后者还有一些妙用，后面会说。
+
+### 基本数据类型 & String
+
+```java
+// Serialization
+Gson gson = new Gson();
+gson.toJson(1);            // ==> 1
+gson.toJson("abcd");       // ==> "abcd"
+gson.toJson(new Long(10)); // ==> 10
+int[] values = { 1 };
+gson.toJson(values);       // ==> [1]
+
+// Deserialization
+int one = gson.fromJson("1", int.class);
+Integer one = gson.fromJson("1", Integer.class);
+Long one = gson.fromJson("1", Long.class);
+Boolean false = gson.fromJson("false", Boolean.class);
+String str = gson.fromJson("\"abc\"", String.class);
+String[] anotherStr = gson.fromJson("[\"abc\"]", String[].class);
+```
+
+### 复合数据类型
+
+```java
+public class ObjectExample {
+	public String publicField;
+	private int privateField = 1;
+}
+```
+
+默认情况下，`Gson`是使用反射的，所以它可以完美支持`private`修饰的字段。下面代码将一个Java对象序列化为一个Json字符串：
+
+```java
+ObjectExample objectExample = new ObjectExample();
+objectExample.publicField = "public";
+String json = gson.toJson(objectExample);
+
+// json --> {"publicField":"public","privateField":1}
+```
+
+将一个Java字符串反序列化为Java对象：
+
+```java
+ObjectExample objectExample = gson.fromJson(json, ObjectExample.class);
+```
+
+上面代码可以看到，在序列化时，直接交给一个Java对象Gson就可以输出对应的Json字符串；而在反序列化时，需要知道对象的确切类型。那么，泛型类怎么办？
+
+### 泛型
+
+序列化不需要指定确切类型，所以很简单，我们造一个`List`对象出来：
+
+```java
+List<ObjectExample> list = new ArrayList<>();
+list.add(objectExample);
+String json = gson.toJson(list);
+// json --> [{"publicField":"public","privateField":1}]
+```
+
+反序列化时，可以借助Gson中提供的`TypeToken`来指定类型信息：
+
+```java
+List<ObjectExample> list = gson.fromJson(json, new TypeToken<List<ObjectExample>>(){}.getType());
+```
+
+泛型类的解析也很简单，那还有一种情况，或者说两种情况：
+
+1. 我们不关心，或者不想为了解析json中的一个值而定义一个对应的类，最简单的情况就是响应中只有一个`{"status": 0}`。
+2. 服务端坑爹，一个`key`对应不同类型的`value`
+
+这两种情况，第一种我们不想定义模型类，第二种是我们定义不了模型类，怎么办呢？针对第二种，我们实际上可以自己定义解析过程，不过还有个更简单或者有时候也很蛋疼的办法。
+
+### 万能的Map
+
+在不知道确切类型的情况下，反序列化时可以直接使用`Map`来指定类型，结果为一个`LinkedTreeMap`对象。要注意的是：
+
+1. `int`、`float`、`long`统统会被解析成`double`，这样的话`long`值解析完成后可能会有精度问题。最简单的办法是这类精度较高的数字都用`String`。
+2. 前面注册的辅助解析的`TypeAdapter`等都不会起作用，这个很好理解，所有的`Object`都会被解析成`LinkedTreeMap`。
+
+### 自定义序列化/反序列化过程
+
+在实际开发过程中，有各种各样的理由让我们要对序列化/反序列化过程做一些干预，Gson提供了`JsonSerializer`、`JsonDeserializer`、`TypeAdapter`和`InstanceCreator`四种方式，它们都可以通过`GsonBuilder#registerTypeAdapter()`方法注册到`Gson`中。
+
+`JsonSerializer`和`JsonDeserializer`是一对组合，前者负责序列化过程，后者负责反序列化过程。`TypeAdapter`是基于流的，可以使用`GsonBuilder#registerTypeAdapterFactory()`来注册一个工厂类管理一系列的`TypeAdapter`。`InstanceCreator`用于反序列化创建类实例时，如果没有无参构造方法时，创建一个这个类的实例。
+
+我们先定义一个比较朴实的类，然后写几个例子：
+
+```java
+public class TypeAdapterExample {
+	public String stringField;
+	public int intField;
+	public double doubleField;
+}
+```
+
+### JsonSerializer & JsonDeserializer
+
+这两可以成对使用，也可以单个使用：
+
+```java
+gsonBuilder.registerTypeAdapter(TypeAdapterExample.class, new JsonSerializer<TypeAdapterExample>() {
+
+					@Override
+					public JsonElement serialize(TypeAdapterExample src, Type typeOfSrc,
+							JsonSerializationContext context) {
+						if (src == null) {
+							return JsonNull.INSTANCE;
+						}
+						JsonObject jsonObject = new JsonObject();
+						if (src.stringField != null) {
+							jsonObject.add("stringField", new JsonPrimitive(src.stringField));
+						}
+						jsonObject.add("intField", new JsonPrimitive(src.intField));
+						jsonObject.add("doubleField", new JsonPrimitive(src.doubleField));
+						return jsonObject;
+					}
+				}).registerTypeAdapter(TypeAdapterExample.class, new JsonDeserializer<TypeAdapterExample>() {
+
+					@Override
+					public TypeAdapterExample deserialize(JsonElement json, Type typeOfT,
+							JsonDeserializationContext context) throws JsonParseException {
+						if (!json.isJsonObject()) {
+							return null;
+						}
+						TypeAdapterExample example = new TypeAdapterExample();
+						JsonObject jsonObject = json.getAsJsonObject();
+						if (jsonObject.has("stringField")) {
+							example.stringField = jsonObject.get("stringField").getAsString();
+						}
+						if (jsonObject.has("intField")) {
+							example.intField = jsonObject.get("intField").getAsInt();
+						}
+						if (jsonObject.has("doubleField")) {
+							example.doubleField = jsonObject.get("doubleField").getAsDouble();
+						}
+						return example;
+					}
+				});
+```
+
+贯穿整个过程用到的都是`JsonElement`，它有4个子类：`JsonNull`、`JsonPrimitive`、`com.google.json.JsonObject`和`com.google.json.JsonArray`，后面俩特意指出包名，是因为它们和`org.json.JSONObject`和`org.json.JSONArray`很容易混淆。
+
+这两种方式和我们使用原生的`org.json`很像，需要注意的是：
+
+1. `JsonPrimitive`的构造方法中不接受`null`值，所以一定要做检查。
+2. `JsonObject#get(memberName)`方法是可能返回`null`值的，所以使用时一定要用`JsonObject.has()`方法做下检查。
+
+### TypeAdapter
+
+`TypeAdapter`是基于流的，它用到的是一对读写流的工具：`JsonReader`和`JsonWriter`，用法很简单：
+
+```java
+import java.io.IOException;
+
+import com.google.gson.TypeAdapter;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
+import com.google.gson.stream.JsonWriter;
+
+public class ExampleTypeAdapter extends TypeAdapter<TypeAdapterExample> {
+
+	@Override
+	public TypeAdapterExample read(JsonReader reader) throws IOException {
+		if (reader.peek() == JsonToken.NULL) {
+			reader.nextNull();
+			return null;
+		}
+		TypeAdapterExample example = new TypeAdapterExample();
+		reader.beginObject();
+		while (reader.hasNext()) {
+			switch (reader.nextName()) {
+			case "stringField":
+				example.stringField = reader.nextString();
+				break;
+			case "intField":
+				example.intField = reader.nextInt();
+				break;
+			case "doubleField":
+				example.doubleField = reader.nextDouble();
+				break;
+			default:
+				break;
+			}
+
+		}
+		reader.endObject();
+		return example;
+	}
+
+	@Override
+	public void write(JsonWriter writer, TypeAdapterExample value) throws IOException {
+		if (value == null) {
+			writer.nullValue();
+			return;
+		}
+		writer.beginObject();
+		writer.name("stringField");
+		writer.value(value.stringField);
+		writer.name("intField");
+		writer.value(value.intField);
+		writer.name("doubleField");
+		writer.value(value.doubleField);
+		writer.endObject();
+	}
+
+}
+```
+
+### InstanceCreator
+
+`InstanceCreator`用于类中没有无参构造方法的情况，可以创建一个默认的该类型的实例：
+
+```java
+gsonBuilder.registerTypeAdapter(TypeAdapterExample.class, new InstanceCreator<TypeAdapterExample>() {
+
+					@Override
+					public TypeAdapterExample createInstance(Type arg0) {
+						return new TypeAdapterExample("privateField");
+					}
+				});
+```
+
+### 字段名策略
+
+有时候会有个蛋疼的问题，Java中字段名一般采用驼峰式命名，但是服务端有可能采用别的方式，比如全小写中间用下短杠连接等。Gson中支持5种字段名策略，定义在`FieldNamingPolicy`类中：
+
+1. `IDENTITY`：默认策略，字段名和Json的`key`保持一致。
+2. `UPPER_CAMEL_CASE`：大写驼峰策略，这个只是把首字母（不是第一个字符）大写了。
+3. `UPPER_CAMEL_CASE_WITH_SPACES`：用空格隔开的大写驼峰策略，先根据大写字母的位置把字段名用空格分隔开，然后把第一段的首字母大写。
+4. `LOWER_CASE_WITH_UNDERSCORES`：这个是最实用的，全小写用下短杠分隔策略，先根据大写字母的位置把字段名用下短杠隔开，然后把所有大写字母转为小写字母。给个例子：`someFieldName ---> some_field_name`。
+5. `LOWER_CASE_WITH_DASHES`：全小写用短杠分隔策略，类似于上面那个，给个例子：`someFieldName ---> some-field-name`。
+
+用法：
+
+```java
+gsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES);
+```
+
+### SerializedName
+
+`FieldNamingPolicy`很有用，但对单独几个字段的控制就没辙了，所幸`SerializedName`很好地填补了空白。
+
+`SerializedName`是作用于字段上的注解，它有两个属性：
+
+1. `String value`：指定序列化或反序列化时字段的名字。
+2. `String[] alternate()`：反序列化时备选的名字。反序列化时，`alternate`中的任一名称都可以匹配成功，当Json字符串中出现多个存在于`alternate`中的名称时，以最后出现的那个值为准。注意`alternate`中不能包含`value`的值，否则会报` java.lang.IllegalArgumentException: class xxx declares multiple JSON fields named xxx`
+
+### 排除策略
+
+有一些情况，我们需要在序列化时不需要加入某些字段，或者在反序列化时不解析某些字段，这个时候就要用到我们说的排除策略。要做一些排除操作，可以用下面方式实现：
+
+1. `ExclusionStrategy`：是一个接口，有两个可实现的方法`boolean shouldSkipField(FieldAttributes f)`和`boolean shouldSkipClass(Class<?> clazz)`。使用方式是调用`GsonBuilder#addDeserializationExclusionStrategy`、`GsonBuilder#addSerializationExclusionStrategy`或者`setExclusionStrategies(ExclusionStrategy...)`。
+2. `GsonBuilder#excludeFieldsWithModifiers`：排除指定修饰符修饰的字段。
+3. `GsonBuilder#excludeFieldsWithoutExposeAnnotation`：排除用`Expose`注解的字段，`Expose`有两个属性`serialize`和`deserialize`，值为`true`时表示希望在序列化或反序列化时排除该字段。
+4. `GsonBuilder#disableInnerClassSerialization`：不序列化内部类。
+5. `GsonBuilder#setVersion`：根据版本号排除，这个另起篇幅说吧。
+
+### 版本兼容
+
+Gson还支持字段的版本兼容，会用到两个注解`Since`和`Until`，它们都有一个名为`value`的属性，为指定的版本号。用法：`GsonBuilder#setVersion(double)`。
+
+`Since`指这个字段从哪个版本开始使用，如果某个字段是1.1版本加入的，而当前版本号为1.0，那么在反序列化和序列化时会忽略该字段。
+
+`Until`指这个字段从哪个版本开始弃用，比如某个字段是从1.0版本后弃用的，当前版本号为1.0，那么在反序列化和序列化时会忽略该字段。
+
+### serializeNulls
+
+调用`GsonBuilder#serializeNulls`后，在序列化时会输出`null`值。
+
+### 格式化输出
+
+调用`GsonBuilder#setPrettyPrinting`可以让Json的输出更美观一点：
+
+默认：
+
+```json
+{"stringField":"typeAdapterExample","intField":2,"doubleField":3.1415926,"longField":0,"emailAddress":"emailAddress"}
+```
+
+调用`GsonBuilder#setPrettyPrinting`后：
+
+```json
+{
+  "stringField": "typeAdapterExample",
+  "intField": 2,
+  "doubleField": 3.1415926,
+  "longField": 0,
+  "emailAddress": "emailAddress"
+}
+```
