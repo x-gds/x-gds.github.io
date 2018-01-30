@@ -168,20 +168,20 @@ React Native上手还是很快的，销探从我开始学习到开发了个差�
 	首先`import {Animated,  FlatList,} from 'react-native`，
     然后创建一个带动画的组件`const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);`，
     最后渲染
-```javascript
-<AnimatedFlatList
-    ItemSeparatorComponent={SeparatorComponent} //分隔组件
-    keyExtractor={(item) => item...} // 数据的key，比如id
-    data={...} 			     // 数据源
-    refreshing={false}		     
-    onRefresh={() => {...}}	     // 下拉事件
-    onEndReached={() => {...}}	     // 上拉事件
-    onEndReachedThreshold={1}	     // 上拉到剩最后几条时调用
+	```javascript
+	<AnimatedFlatList
+    	ItemSeparatorComponent={SeparatorComponent} //分隔组件
+    	keyExtractor={(item) => item...} // 数据的key，比如id
+    	data={...} 			     // 数据源
+    	refreshing={false}		     
+    	onRefresh={() => {...}}	     // 下拉事件
+    	onEndReached={() => {...}}	     // 上拉事件
+    	onEndReachedThreshold={1}	     // 上拉到剩最后几条时调用
     				     // onEndReached，至少为1
-    renderItem={({item}) => (...)}   // 渲染Item
-/>
-```
-亲测`onEndReachedThreshold`设置为`0`的话，上拉事件有时候不响应
+    	renderItem={({item}) => (...)}   // 渲染Item
+	/>
+	```
+	亲测`onEndReachedThreshold`设置为`0`的话，上拉事件有时候不响应
 
 16. Android的适配：开发时，就算用真机也很卡，这点要有个心理准备。
 	iOS版开发完成后要针对Android版进行一次适配，重点在UI上，比如Android上的输入框会有个很蛋疼的下划线，要用`underlineColorAndroid="transparent"`去掉。
