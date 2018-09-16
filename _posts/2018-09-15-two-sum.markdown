@@ -1,0 +1,44 @@
+---
+layout: post
+title:  "LeetCode #1 两数之和 Two Sum"
+date:   2018-09-15 21:26:41 +0800
+categories: 算法
+---
+
+## LeetCode #1 两数之和 Two Sum
+
+给定一个整数数组和一个目标值，找出数组中和为目标值的两个数。
+
+你可以假设每个输入只对应一种答案，且同样的元素不能被重复利用。
+
+**示例**：
+
+```
+给定 nums = [2, 7, 11, 15], target = 9
+
+因为 nums[0] + nums[1] = 2 + 7 = 9
+所以返回 [0, 1]
+```
+
+由于数组可能是未排序的，所以利用前后移动指针的方式行不通，这时候要保证时间复杂度的话，我们可以考虑使用额外的空间复杂度来辅助。
+
+题目是在指定数组中找到和为目标值的两个数，实际需要的是这两个数在数组中的下标。我们可以把这个问题转化为查找目标和减去当前值是否已经记录的问题，这个记录就可以用一个哈希表，`key`为数组中的某个值，`value`为这个值在数组中的下标。想明白后就很容易写出代码了：
+
+```java
+class Solution {
+    public int[] twoSum(int[] nums, int target) {
+        int[] result = new int[2];
+		HashMap<Integer, Integer> indexMap = new HashMap<>();
+		for (int i = 0; i < nums.length; i++) {
+			if (indexMap.containsKey(target - nums[i])) {
+				result[0] = indexMap.get(target - nums[i]);
+				result[1] = i;
+				break;
+			}
+			indexMap.put(nums[i], i);
+		}
+		return result;
+    }
+}
+```
+
